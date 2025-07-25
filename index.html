@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Health Live Dashboard</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #eef2f7; margin: 0;}
+        .dashboard-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 35px; background: #fff; box-shadow: 0 2px 8px #0001;
+        }
+        .dashboard-title { color: #1d2536; font-size: 2.7rem; margin: 0; font-weight: 700;}
+        .nav-btn {
+            display:inline-block; padding:8px 21px;background:#317fd8;
+            color:#fff;text-decoration:none;border-radius:7px;
+            font-size: 17px;font-weight:500;transition:background .2s;
+        }
+        .nav-btn:hover {background:#0656b1;}
+        #chart-card {
+            max-width: 950px; margin: 36px auto 0 auto;
+            border-radius: 13px; background: #fff;
+            box-shadow: 0 3px 16px #0001; padding: 36px 40px 18px 40px;
+        }
+        #vitals-row {
+            display: flex; flex-wrap: wrap; gap: 24px;
+            justify-content: center; margin-bottom: 18px;
+        }
+        .vital-block {
+            flex: 1 1 160px; background: #f9fafc;
+            border-radius: 11px; padding: 12px 0 8px 0;
+            box-shadow: 0 1px 8px #0001;border:1.5px solid #ecf0f4;
+            text-align: center; font-size: 16px;
+            margin: 0 1.5%;
+        }
+        .vital-title { color:#444953; font-size: 1.10em; letter-spacing:1.5px;}
+        .vital-value { font-size: 2.7em; font-weight: 700; margin: 7px 0 3px 0; color: #222;}
+        .vital-unit { font-size:12.5px;}
+        #note-block { margin: 70px 0 20px 0; }
+        .cond {
+            font-size: 1.1em; font-weight: bold; color:#fff;
+            margin-right:8px; padding:7px 18px;
+            border-radius: 7px; display: inline-block;
+            letter-spacing:0.5px;
+        }
+        .cond-normal    { background: #317fd8; }
+        .cond-mild      { background: #fec600; color: #232325;}
+        .cond-moderate  { background: #fd7e14; }
+        .cond-critical  { background: #e34e43; }
+        #note-text { margin-left:15px; font-size:1.13em; color:#333; font-weight:500;}
+        #chart {background: #fff; border-radius: 9px; box-shadow: 0 1px 6px #0001;}
+        @media (max-width: 1200px){
+            #chart-card{ max-width:98%; padding:22px 5vw 12px 5vw;}
+        }
+        @media (max-width: 700px){
+            .dashboard-header{padding:14px 6vw 3px 6vw;}
+            #chart-card{padding:12px 2vw 8px 2vw; margin:15px 0 0 0;}
+            #vitals-row{flex-direction:column;}
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard-header">
+        <h1 class="dashboard-title">Dashboard</h1>
+        <a class="nav-btn" href="/history">History&nbsp;Table</a>
+    </div>
+    <div id="chart-card">
+        <div id="vitals-row">
+            <div class="vital-block">
+                <div class="vital-title">Heart Rate</div>
+                <div class="vital-value" id="hr-value">--</div>
+                <div class="vital-unit">bpm</div>
+            </div>
+            <div class="vital-block">
+                <div class="vital-title">SpO₂</div>
+                <div class="vital-value" id="spo2-value">--</div>
+                <div class="vital-unit">%</div>
+            </div>
+            <div class="vital-block">
+                <div class="vital-title">Temperature</div>
+                <div class="vital-value" id="temp-value">--</div>
+                <div class="vital-unit">°C</div>
+            </div>
+            <div class="vital-block">
+                <div class="vital-title">GSR</div>
+                <div class="vital-value" id="gsr-value">--</div>
+            </div>
+        </div>
+        <div id="note-block">
+            <span class="cond cond-normal" id="condition-block" style="display:none">Normal</span>
+            <span class="cond cond-mild" id="condition-block-mild" style="display:none">Mild</span>
+            <span class="cond cond-moderate" id="condition-block-moderate" style="display:none">Moderate</span>
+            <span class="cond cond-critical" id="condition-block-critical" style="display:none">Critical</span>
+            <span id="note-text"></span>
+        </div>
+        <div id="chart"></div>
+    </div>
+    <script>
+        let chart;
+        const options = {
+            chart: {
+                type: 'line',
+                animations: { enabled: true },
+                height: 340,
+                toolbar: { show: false }
+            },
+            series: [
+                { name: 'Heart Rate (HR)', data: [] },
+                { name: 'SpO₂ (%)', data: [] }
+            ],
+            xaxis: {
+                type: 'datetime',
+                labels: { datetimeFormatter: { minute: 'HH:mm:ss' }},
+                title: { text: "Timestamp (IST)" }
+            },
+            yaxis: [
+                { title: { text: "Heart Rate (bpm)" }, min: 40, max: 160 },
+                { opposite: true, title: { text: "SpO₂ (%)" }, min: 75, max: 105 }
+            ],
+            colors: ['#008ffb', '#1db954'],
+            legend: { position: 'top' }
+        };
+
+        chart = new ApexCharts(document.querySelector("#chart"), options);
+        chart.render();
+
+        // Fetch all records for graph (and latest for blocks)
+        async function fetchAndUpdate() {
+            try {
+                const resp = await fetch('/api/latest'); // Should return ALL records sorted oldest to newest
+                const data = await resp.json();
+                if (!data.length) return;
+
+                // Chart: full timeline
+                const hrSeries = [], spo2Series = [];
+                data.forEach(row => {
+                    const ts = new Date(row.createdAt).getTime() + (5.5 * 60 * 60 * 1000);
+                    hrSeries.push({ x: ts, y: row.hr });
+                    spo2Series.push({ x: ts, y: row.spo2 });
+                });
+                chart.updateSeries([
+                    { name: 'Heart Rate (HR)', data: hrSeries },
+                    { name: 'SpO₂ (%)', data: spo2Series }
+                ]);
+
+                // Latest entry for blocks
+                const latest = data[data.length - 1];
+                document.getElementById('hr-value').textContent = latest.hr !== undefined ? latest.hr : "--";
+                document.getElementById('spo2-value').textContent = latest.spo2 !== undefined ? latest.spo2 : "--";
+                document.getElementById('temp-value').textContent = latest.temp !== undefined ? latest.temp : "--";
+                document.getElementById('gsr-value').textContent = latest.gsr !== undefined ? latest.gsr : "--";
+
+                // Show correct condition badge and note
+                document.getElementById('condition-block').style.display = 'none';
+                document.getElementById('condition-block-mild').style.display = 'none';
+                document.getElementById('condition-block-moderate').style.display = 'none';
+                document.getElementById('condition-block-critical').style.display = 'none';
+                if (latest.predicted_condition) {
+                    if (latest.predicted_condition === "Normal")
+                        document.getElementById('condition-block').style.display = 'inline-block';
+                    else if (latest.predicted_condition === "Mild")
+                        document.getElementById('condition-block-mild').style.display = 'inline-block';
+                    else if (latest.predicted_condition === "Moderate")
+                        document.getElementById('condition-block-moderate').style.display = 'inline-block';
+                    else if (latest.predicted_condition === "Critical")
+                        document.getElementById('condition-block-critical').style.display = 'inline-block';
+                }
+                document.getElementById('note-text').textContent = latest.explanatory_note || "";
+            } catch (err) {
+                console.error("Error fetching live data", err);
+            }
+        }
+
+        fetchAndUpdate();
+        setInterval(fetchAndUpdate, 2000); // refresh every 2 seconds
+    </script>
+</body>
+</html>
